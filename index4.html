@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="container"></div>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "/node_modules/three/build/three.module.js",
+                "three/addons/": "/node_modules/three/examples/jsm/",
+                "load/": "/shader/"
+            }
+        }
+    </script>
+    <script type="module">
+        import * as THREE from 'three'
+        import {OrbitControls} from 'three/addons/controls/OrbitControls.js'
+
+        const textureLoader = new THREE.TextureLoader();
+
+        /**
+         * 顶点着色器Vertex Shader
+         * 
+         * 用于定位几何体的顶点，他的工作原理是发送顶点位置，网格变换(position,rotation,scale等)，摄像信息(
+         * position,rotation,fov等)。GPU按照Vertex Shader的指令处理这些信息，然后将顶点投影到2D空间中渲染成canvas。
+         * 
+         * 当使用Vertex Shader时，他的代码将作用域几何体的每个顶点，在每个顶点之间，有些数据会发生变化，
+         * 这类数据被称为attribute;有些数据在顶点之间永远不会变化，这种数据称为uniform.Vertex Shader会首先触发，当顶点被放置，
+         * GPU知道几何体的哪些像素可见，然后执行Fragment Shader。
+        */
+        // attribute:使用顶点数组封装每个顶点的数据，一般用于每个顶点都各不相同的变量，如顶点的位置
+        // uniform:顶点着色器使用的常量数据，不能被修改，一般用于对同一组顶点组成的单个3D物体中所有
+        // 顶点都相同的变量，如当前光源的位置。
+
+        /**
+         * 片元着色器Fragment Shader
+         * 
+         * 它在Vertex Shader之后执行，他的作用时为几何体的每个可见像素进行着色，我们可以通过uniforms将数据发送给她，也可以将Vertex Shader中的数据发送给她。
+         * 我们将这种从Vertex Shader发送到Fragment Shader的数据称为varying.
+         * 
+         * Fragment Shader中最直接的指令就是可以使用相同的颜色为所有像素进行着色。如果只设置了颜色属性，
+         * 就相当于得到了与MeshBasicMaterial等价的材质。如果我们将光照的位置发送给Fragment Shader,然后根据像素收到光照影响的
+         * 多少来给像素上色，此时就能得到与MeshPhongMaterial效果等价的材质。
+        */
+        // varying:从顶到着色器发送到片元着色器中的插值计算数据。
+
+        /**
+         * 原始着色器材质RawShaderMaterial
+         *
+         * 在three中，可以渲染着色器材质的有两种，RawShaderMaterial和ShaderMateril,他们之间的区别是，ShaderMaterial会自动将一些
+         * 初始化着色器参数添加到代码中(内置attributes和uniforms)，而RawShaderMaterial则什么都不会添加.
+         */ 
+
+        /**
+         * 属性Attributes 是每个顶点之间变化的值，我们之前已经有了一个命名为position的属性变量，她是每个顶点在坐标轴中的vec3值，我们将为每个顶点添加一个随机
+         * 值，并根据这个值在z轴上移动该顶点。在js代码中我们可以像下面直接给BufferGeometry添加attribute属性。然后创建一个32位的浮点型数组Float32Array,为了知道
+         * 几何体中有多少个顶点，现在可以通过attributes属性获取。最后在BufferAttribute中使用该数组，并将它添加到几何体的属性中
+        */
+
+        // setAttribute：第一个参数是需要设置的attribute属性名称，然后在着色器中可以使用该名字
+        // BufferAttribute：第一个参数是数据数组；第二参数表示组成一个属性的值的数量，如我们药发送要给(x,y,z)构成位置，则需要使用3，实例中每个顶点的随机数只有1个，
+        // 因此这参数使用1
+         
+        const material = new THREE.RawShaderMaterial({
+            vertexShader: `
+                uniform mat4 projectionMatrix;
+                uniform mat4 viewMatrix;
+                uniform mat4 modelMatrix;
+                attribute vec3 position;
+                attribute float aRandom;
+                varying float vRandom;
+                // uniform float uFrequency;
+                uniform vec2 uFrequency;
+                uniform float uTime;
+                attribute vec2 uv;
+                varying vec2 vUv;
+
+                void main() {
+                    vRandom = aRandom;
+                    vec4 modelPosition = modelMatrix * vec4(position, 1.0);
+
+                    vUv = uv;
+
+                    // modelPosition.y += sin(modelPosition.x * 10.0) * 0.1;
+                    // modelPosition.z += sin(modelPosition.x * 10.0) * 0.1;
+                    // modelPosition.z += sin(modelPosition.x * uFrequency) * 0.1;
+                    // modelPosition.z += aRandom * 0.1;
+
+                    modelPosition.z += sin(modelPosition.x * uFrequency.x + uTime) * 0.1;
+                    modelPosition.z += sin(modelPosition.y * uFrequency.y + uTime) * 0.1;
+                    
+                    vec4 viewPosition = viewMatrix * modelPosition;
+                    vec4 projectedPosition = projectionMatrix * viewPosition;
+                    gl_Position = projectedPosition;
+                    // gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                // 用来决定浮点数的精度，highp，会影响性能，mediump，常用，lowp 可能会由于精度问题产生错误
+                precision mediump float;
+                varying float vRandom;
+                uniform vec3 uColor;
+
+                uniform sampler2D uTexture;
+                varying vec2 vUv;
+                
+                void main() {
+                    // gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); // 红色
+                    // gl_FragColor = vec4(0.5, 0.0, 1.0, 1.0);
+                    // gl_FragColor = vec4(0.5, vRandom, 1.0, 1.0); // 紫色
+                    // gl_FragColor =  vec4(uColor, 1.0);
+
+                    vec4 textureColor = texture2D(uTexture, vUv);
+                    gl_FragColor = textureColor;
+
+                }
+            `,
+            // wireframe: true,
+            // transparent: true
+            uniforms: {
+                // uFrequency: { value: 10 }
+                uFrequency: { value: new THREE.Vector2(10, 5) },
+                uTime: { value: 0 },
+                uColor: { value: new THREE.Color('orange') },
+                uTexture: { value: textureLoader.load('/assets/a2.jpg') }
+            }
+        })
+
+
+        const scene = new THREE.Scene()
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000)
+
+        camera.position.set(4, 4, 4)
+        scene.add(camera)
+
+        //创建环境光，环境光会均匀的照亮场景中的所有物体。
+        const light = new THREE.AmbientLight(0x404040);
+        //将环境光添加到场景
+        scene.add(light);
+
+        // 创建渲染器
+        const renderer = new THREE.WebGLRenderer();
+        // 设置渲染器尺寸
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // 轨道控制器
+        const controls = new OrbitControls(camera, renderer.domElement);
+        // 轨道控制器的阻尼感
+        controls.enableDamping = true;
+
+        const planeGeometry = new THREE.PlaneGeometry(3,3,64,64);
+
+        const count = planeGeometry.attributes.position.count;
+        const random = new Float32Array(count)
+
+        for (let i = 0; i < count; i++) {
+            random[i] = Math.random()
+        }
+        planeGeometry.setAttribute('aRandom', new THREE.BufferAttribute(random, 1))
+
+        const material1 = new THREE.MeshPhongMaterial({ color: 0xffffff * Math.random(), flatShading: true })
+        const plane = new THREE.Mesh(planeGeometry, material);
+        plane.rotation.x = -Math.PI / 2; // 平面水平放置
+        scene.add(plane);
+
+        const clock = new THREE.Clock()
+
+        function render() {
+            //阻尼
+            controls.update()
+            // let time = clock.getElapsedTime();
+            // material.uniforms.time.value = time
+
+            const elapsedTime = clock.getElapsedTime();
+            material.uniforms.uTime.value = elapsedTime;
+
+            renderer.render(scene, camera);
+            requestAnimationFrame(render);
+        }
+
+        // 初始化渲染函数
+        render();
+
+        // 监听浏览器窗口尺寸变化
+        window.addEventListener('resize',() => {
+            //重新设置相机宽高比
+            camera.aspect = window.innerWidth / window.innerHeight;
+            //更新相机投影矩阵
+            camera.updateProjectionMatrix();
+            //重新设置渲染器尺寸
+            renderer.setSize(window.innerWidth,window.innerHeight);
+            //设置设备像素比
+            renderer.setPixelRatio(window.devicePixelRatio)
+        })
+
+    </script>
+</body>
+</html>
